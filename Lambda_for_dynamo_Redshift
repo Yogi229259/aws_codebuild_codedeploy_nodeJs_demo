@@ -1,0 +1,48 @@
+import json
+import logging
+import boto3
+import os
+from datetime import datetime
+from dynamodb_json import json_util as dynamojson2json
+
+logger = logging.getLogger()
+logger.setLevel(logging.ERROR)
+firehose = boto3.client('firehose')
+deliveryStreamName = os.environ['KINESIS_DELIVERY_STREAM']
+
+
+def lambda_handler(event, context):
+    for record in event['Records']:
+        ddbRecord = record['dynamodb']
+        if record['eventName'] == 'INSERT':
+            newImage = ddbRecord['NewImage']
+            firehoseRecord = convertToFirehoseRecord(newImage, 'I')
+            firehose.put_record(DeliveryStreamName=deliveryStreamName, Record={'Data': firehoseRecord})
+        elif record['eventName'] == 'MODIFY':
+            newImage = ddbRecord['NewImage']
+            firehoseRecord = convertToFirehoseRecord(newImage, 'U')
+            firehose.put_record(DeliveryStreamName=deliveryStreamName, Record={'Data': firehoseRecord})
+        elif record['eventName'] == 'REMOVE':
+            oldImage = ddbRecord['OldImage']
+            firehoseRecord = convertToFirehoseRecord(oldImage, 'D')
+            firehose.put_record(DeliveryStreamName=deliveryStreamName, Record={'Data': firehoseRecord})
+
+    return 'processed {} records.'.format(len(event['Records']))
+
+
+def convertToFirehoseRecord(ddbRecord, iud):
+    firehoseRecord = ''
+    fieldJSON = modifyNewImageForCompatibility(ddbRecord, iud)
+    firehoseRecord = json.dumps(fieldJSON) + '\n'
+    #print(firehoseRecord)
+    return firehoseRecord
+
+
+
+def modifyNewImageForCompatibility(dynamoInsertedRecord, iud):
+    fieldJSON = dynamojson2json.loads(dynamoInsertedRecord)
+    fieldJSON['dw_date_modified'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]
+    fieldJSON['iud'] = iud
+    fieldJSON = {key.lower():value for key, value in fieldJSON.items()}
+        
+    return fieldJSON    
